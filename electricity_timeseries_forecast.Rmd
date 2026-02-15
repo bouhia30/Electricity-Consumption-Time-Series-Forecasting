@@ -60,7 +60,7 @@ library(writexl)
 
 ```{r}
 #data Importation
-dataset_elect = read_excel('C:\\Users\\33751\\Desktop\\DSTI_course\\TimeSeriesAnalysis\\dataset\\2023-11-Elec-train.xlsx')
+dataset_elect = read_excel('\TimeSeriesAnalysis\\dataset\\2023-11-Elec-train.xlsx')
 head(dataset_elect)
 ```
 This dataset contains time series data with three main columns:
@@ -369,7 +369,7 @@ forcasts_elect_feb21=forecast(ARIMA, h=96)
 
 plot(forcasts_elect_feb21, main="Historical Power consumption + forecast on 21 feb")
 
-#write_xlsx(data.frame(Power_forcast_without_Temp =round(as.numeric(forcasts_elect_feb21$mean),1)), path ="TimeSeriesAnalysis\\timeseries_forecast.xlsx")
+#write_xlsx(data.frame(Power_forcast_without_Temp =round(as.numeric(forcasts_elect_feb21$mean),1)), path ="TimeSeriesAnalysis\\forecast_without_temp.xlsx")
 ```
 
 
@@ -617,7 +617,7 @@ predict_power_21feb=forecast(DR_model,xreg = ts_temp_21feb)
 
 plot(predict_power_21feb, main="Historical Power Consumption  + last day forecast")
 
-#write_xlsx(data.frame(Power_forcast_with_Temp = round(as.numeric(predict_power_21feb$mean),1)),path = "\\TimeSeriesAnalysis\\timeseries_forecast.xlsx")
+#write_xlsx(data.frame(Power_forcast_with_Temp = round(as.numeric(predict_power_21feb$mean),1)),path = "\\TimeSeriesAnalysis\\forecast_with_temp.xlsx")
 
 ```
 
