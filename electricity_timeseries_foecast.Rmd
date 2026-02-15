@@ -1,0 +1,628 @@
+---
+title: "Timeseries Forecasting with R"
+author: "BOUHIA Zakaria"
+date: "2024-08-01"
+output: pdf_document
+---
+
+---
+title: "Timeseries Forecasting with R""
+author: "BOUHIA Zakaria DS A22"
+date: "2024-08-01"
+output: html_document
+---
+
+# Introduction:
+
+This project contains the analysis and forecasting models for predicting electricity consumption (kW) for a specific building on 2/21/2010. The project aims to develop two separate forecasts:
+
+1. A forecast without using outdoor temperature data
+2. A forecast incorporating outdoor temperature data
+
+The primary dataset, '2023-11-Elec-train.xlsx', includes electricity consumption and outdoor air temperature measurements at 15-minute intervals from 1/1/2010 1:15 to 2/20/2010 23:45. Additionally, we have outdoor air temperature data for the target date (2/21/2010).
+
+Our objective is to test and compare various forecasting models to achieve the most accurate predictions possible. This R Markdown will document the entire process, including:
+
+- Data loading and pre-processing
+- Exploratory data analysis
+- Model selection and tuning
+- Forecast generation
+- Model evaluation and comparison
+
+We will use R for our analysis, leveraging various time series forecasting techniques covered in our course. The final output will be two sets of 96 predictions (representing 24 hours at 15-minute intervals) for electricity consumption on 2/21/2010.
+
+Let's begin by importing the necessary libraries and loading our data.
+
+#```{r setup, include=FALSE}
+#install the packages
+install.packages('readxl', repos = "http://cran.us.r-project.org")
+install.packages("openxlsx", repos = "http://cran.us.r-project.org")
+install.packages('tidyverse', repos = "http://cran.us.r-project.org")
+install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+install.packages("forecast", repos = "http://cran.us.r-project.org")
+install.packages("fpp2", repos = "http://cran.us.r-project.org")
+install.packages("writexl", repos = "http://cran.us.r-project.org")
+
+#```
+
+```{r}
+library(readxl)
+library(tseries)
+library(openxlsx)
+library(tidyverse)
+library(ggplot2)
+library(forecast)
+library(fpp2)
+library(writexl)
+```
+
+## Data Importation:
+
+```{r}
+#data Importation
+dataset_elect = read_excel('C:\\Users\\33751\\Desktop\\DSTI_course\\TimeSeriesAnalysis\\dataset\\2023-11-Elec-train.xlsx')
+head(dataset_elect)
+```
+This dataset contains time series data with three main columns:
+
+-Timestamp: Represents the date and time of each observation.
+-Power (kW): Shows the electricity consumption in kW.
+-Temp (C°): Indicates the outdoor temperature in degrees C°.
+
+The data is recorded at 15-minute intervals, providing a high-resolution view of electricity consumption and temperature changes throughout the day. The dataset spans from January 1, 2010, to February 20, 2010, encompassing a total of 4,987 rows.
+
+It's important to note that the dataset is not perfectly balanced at the start. The first hour of data for January 1, 2010, is missing. To ensure a balanced dataset for our analysis and to have complete days, we will remove the data for the entire first day (January 1, 2010). This will give us a clean starting point from January 2, 2010, with full 24-hour cycles for each day.
+
+By removing the incomplete first day, we ensure that each day in our analysis has an equal number of data points (96 readings per day, given the 15-minute frequency), which will be crucial for accurate time-based analysis and forecasting.
+
+```{r}
+#data processing
+dataset_elect_balanced=dataset_elect[-(1:91), ] #delete the first incomplete first day
+head(dataset_elect_balanced)
+```
+
+## Exploratory data analysis (EDA)
+
+Before diving into the analysis of this time series, let's first transform it into a proper time series format. 
+
+
+
+```{r}
+#timeseries transformation format
+ts_elect=ts(dataset_elect_balanced$`Power (kW)`, start=c(1,1), end=c(51,96), freq=96)
+head(ts_elect)
+```
+Let's Visualize this timee serie:
+
+```{r}
+# Plot the time series
+plot(ts_elect, type="l", main="Time Series Plot of Power(kW)", ylab="Power (kW)", xlab="Time")
+
+```
+As we notice, there is an anomalous values of 0. We'll attempt to fix it by assigning a logical value based on data variation. 
+
+```{r}
+# Plot the time series
+plot(ts_elect, type="l", main="Time Series Plot of Power(kW)", ylab="Power (kW)", xlab="Time")
+
+# Add a horizontal line at y = 170
+abline(h=160, col="red", lwd=2)
+# Add a horizontal line at y = 150
+abline(h=150, col="blue", lwd=2)
+```
+Graphically, a value between 150 and 170 seems reasonable, but I will opt for 160.
+
+```{r}
+dataset_elect_balanced['Power (kW)'][dataset_elect_balanced['Power (kW)'] == 0]= 160
+ts_elect=ts(dataset_elect_balanced$`Power (kW)`, start=c(1,1), end=c(51,96), freq=96)
+head(ts_elect)
+
+summary(ts_elect)
+
+plot(ts_elect, type="l", main="Time Series Plot of Power(kW)", ylab="Power (kW)", xlab="Time")
+```
+
+
+# Forcasts without using outdoor temperature:
+
+
+
+## Decompsoiton Timeserie 
+
+Let's explore the decomposition of our time series data to visually analyze its trend and seasonal components.
+
+
+```{r}
+plot(decompose(ts_elect, type="additive"))
+
+```
+
+Upon examining the decomposition, we observe that there isn't a clear upward or downward trend in the data. However, the seasonal component reveals some consistent patterns, suggesting seasonality in the data. Given these observations, we'll focus on using seasonal models for forecasting, as they are better suited to capture and leverage the seasonal patterns present in the time series.
+
+## Train-Test  data set Split 
+
+We are considering splitting the data into training and test sets using an 80/20 rule.
+
+The training set will span from January 2, 2010, at 00:00 to February 10, 2010, at 23:45.
+
+```{r}
+train_set = window(ts_elect, start=c(1,1), end=c(40,96))
+test_set = window(ts_elect, start=c(41,1), end=c(50,96))
+
+plot(train_set, xlim=c(1,52), ylim=c(100,380), type="l", main="Time Series Plot of Power(kW) train_set vs test_set", ylab="Power (kW)", xlab="Time")
+lines(test_set, lty=2)
+
+```
+
+## Simple Exponential Smoothing (SES)
+
+To forecast electricity consumption using a regression model, we'll start with a basic approach by applying Simple Exponential Smoothing (SES). Since we are not considering any trend or seasonal components in this initial model, the forecast will be a constant value based on the level of the time series data.
+
+```{r}
+SES=HoltWinters(train_set, alpha=NULL, beta=FALSE, gamma=FALSE)
+print(SES)
+```
+The model predicts future electricity consumption as a constant value of 156.3719. The high alpha value shows that the model is very responsive to recent changes in the data. However, since no trend or seasonal components are included, the model assumes these changes are not part of any ongoing patterns. Consequently, the forecast remains flat at the estimated level of 156.3719. That said, the value we considered to replace the null value (160 kW) is reasonable.
+
+Let's predict for  the next 10 days (until February 20, 2010, at 23:45 ) based on SES:
+
+```{r}
+consum_pred1=predict(SES, n.ahead=96*10)  
+plot(test_set,type="l", main="Prediction VS Test based on SES", ylab="Power (kW)", xlab="Time")
+lines(consum_pred1, col=2) 
+```
+Let's Evaluate this model:
+
+```{r}
+print(SES$alpha) # 0.9860426 
+RMSE_SES=sqrt(mean((consum_pred1 - test_set)^2))
+print(RMSE_SES)
+```
+-The high alpha value confirms that the SES model is primarily influenced by recent data, making it very adaptive to short-term changes.
+
+-However, the RMSE of 93.28456 implies that there is still a noticeable level of error in the model's predictions. While the SES model captures the overall level of electricity consumption, the deviations from actual consumption might indicate that the data has underlying patterns (such as trends or seasonality) that are not being fully accounted for by this simple model.
+
+
+As observed during the decomposition step, there is no trend but a noticeable seasonality. Therefore, we will apply the Holt-Winters seasonal model, considering the gamma coefficient while ignoring the beta component.
+
+## Holt-Winters seasonal model
+
+```{r}
+HW_Seasonal=HoltWinters(train_set, alpha=NULL, beta=FALSE, gamma=NULL)
+print(HW_Seasonal)
+```
+
+The model captures the underlying level and seasonal patterns in the data, but it does not account for any trend.
+Alpha=0.7831196: The model gives moderate weight to recent observations when estimating the level of the series.
+
+The seasonal component has significant variations, reflecting the importance of seasonality in the electricity consumption data.
+
+Now we predict for the next 10 days as we did previosuly
+
+```{r}
+consum_pred2=predict(HW_Seasonal,n.ahead=96*10)
+plot(test_set,type="l", main="Prediction VS Test based on HW_Seasonal", ylab="Power (kW)", xlab="Time")
+lines(consum_pred2, col=2)
+```
+```{r}
+print(HW_Seasonal$alpha) #0.7831196
+print(HW_Seasonal$gamma) #0.8904545
+RMSE_HW_Seasonal=sqrt(mean((consum_pred2 - test_set)^2))
+print(RMSE_HW_Seasonal)
+```
+The Holt-Winters seasonal model has an alpha of 0.7831196, indicating moderate smoothing of the level, and a gamma of 0.8904545, showing strong emphasis on recent seasonal patterns. The RMSE of 21.23858 suggests that the model provides accurate forecasts than the SES model since we have RMSE_HW_Seasonal<RMSE_SES.
+
+
+Let's enhance our forecasting analysis by using ARIMA models, beginning with an Auto-ARIMA approach.
+
+## Auto-ARIMA
+
+
+```{r}
+auto_arima=auto.arima(train_set)
+summary(auto_arima)
+```
+We can say that the Auto-ARIMA model identifies a SARIMA with an order of 1 and a seasonal period of 96.
+
+```{r}
+consum_pred3=forecast(auto_arima,h=96*10)
+```
+
+Let's evaluate the model 
+
+```{r}
+RMSE_ARIMA=sqrt(mean((consum_pred3$mean - test_set)^2))
+print(RMSE_ARIMA)
+
+``` 
+The SARIMA model is currently the best among the three we've developed as it presents the lowest RMSE. However, we need to verify that the residuals are independent of previous values.
+This step helps validate the model's effectiveness and ensures reliable forecasts.
+
+### Residuals analysis
+
+
+```{r}
+checkresiduals(auto_arima)
+
+``` 
+The very small p-value indicates that the residuals are not independent, suggesting significant dependence.This implies that the model might not have captured all underlying patterns. We need to go futher in the analysis
+by differencing the series to extract the residuals and achieve independence.
+
+In order to launch SARIMA, let's follow thee process:
+
+1- Removing Seasonality:
+
+We are differencing the series with the appropriate lag. We choose a lag=96 that corresponding of the seasonal period of the time series.
+
+```{r}
+diff_96= diff(train_set, lag=96)  #differcing with lag=96
+plot(diff_96)
+```
+
+2- Examining the autocorrelation function (ACF):
+
+```{r}
+ggAcf(diff_96)
+```
+3-Examining the Partial autocorrelation function (PACF)
+
+```{r}
+ggPacf(diff_96)
+``` 
+The ACF and PACF plots show multiple spikes beyond the significance bounds at various lags, indicating that significant autocorrelation remains in the residuals.
+
+
+Let's try further diffrencing the series with lag=96*2
+
+```{r}
+diff_192= diff(diff_96, lag=96*2)  #differcing with lag=96
+plot(diff_192)
+```
+```{r}
+ggAcf(diff_192)
+```
+
+```{r}
+ggPacf(diff_192)
+```
+
+
+
+```{r}
+diff_288= diff(diff_96, lag=96*3)  #differcing with lag=96
+plot(diff_288)
+ggAcf(diff_288)
+ggPacf(diff_288)
+```
+
+Once the residuals of the series have been made more independent.
+
+
+## Neural Network AutoRegression model
+
+Now let's try to use a neural network model NNAR.
+
+```{r}
+nnar_model=nnetar(train_set)
+print(nnar_model)
+
+```
+For the forcasts:
+```{r}
+consum_pred4 = forecast(nnar_model, h=96*10)
+```
+
+Let's evaluate the NNAR model
+```{r}
+RMSE_nnAR=sqrt(mean((consum_pred4$mean - test_set)^2))
+print(RMSE_nnAR)
+```
+
+The RMSE is quite large, indicating that this neural network model may not be performing well on the data.
+
+
+## Comparaison and Choosing the best model
+
+```{r}
+# Plot the data and predictions
+par(mfrow=c(1,1))
+plot(test_set, xlim=c(41,51), ylim=c(120,700),main="Comparaison of models", ylab="Power (kW)", xlab="Time")
+lines(test_set, lty=2)
+lines(consum_pred1, col=2)
+lines(consum_pred2, col=3)
+lines(consum_pred3$mean, col=4)
+lines(consum_pred4$mean, col=5)
+
+# Add a legend
+legend('topleft',
+       col=1:5,
+       lty=1,
+       legend=c('Real Values',
+                'Forcasts(SES)',
+                'Forcasts(HW_Seasonal)',
+                'Forcasts(ARIMA)',
+                'Forcasts(nnAR)'))
+
+```
+
+Let's compare the RMSE of models,and find the lowest RMSE
+
+```{r}
+min_rmse=min(RMSE_HW_Seasonal,RMSE_nnAR,RMSE_SES,RMSE_ARIMA)  #RMSE_SARIMA
+cat("Minimum RMSE among the models is ARIMA:", min_rmse,  "\n")
+```
+
+Since the ARIMA model achieves the lowest RMSE, it is the most suitable choice among the models evaluated, given the parameters we have previously determined.
+
+
+## Forcasts using the best model
+
+
+```{r}
+ARIMA=Arima(ts_elect, order=c(1,0,0), seasonal=c(0,1,0))
+#ts_elect[1:(length(ts_elect) - 96)
+summary(ARIMA)
+```
+```{r}
+
+forcasts_elect_feb21=forecast(ARIMA, h=96)
+
+plot(forcasts_elect_feb21, main="Historical Power consumption + forecast on 21 feb")
+
+#write_xlsx(data.frame(Power_forcast_without_Temp =round(as.numeric(forcasts_elect_feb21$mean),1)), path ="TimeSeriesAnalysis\\timeseries_forecast.xlsx")
+```
+
+
+# Forcasts  using outdoor temperature:
+
+We will now incorporate Temperature as a covariate in our Electricity Consumption Forecasting.
+
+
+## Data Preperation
+```{r}
+
+ts_power=ts(dataset_elect_balanced$`Power (kW)`, start=c(1,1), end=c(51,96), freq=96)
+ts_temp=ts(dataset_elect_balanced$`Temp (C°)`, start=c(1,1), end=c(51,96), freq=96)
+head(ts_elect)
+head(ts_temp)
+
+```
+```{r}
+plot(decompose(ts_temp, type="additive"))
+```
+
+```{r}
+# Plot the first time series (Power)
+plot(ts_power, type="l", col="blue", ylab="Power (kW)", xlab="Time", main="Power and Temperature Over Time")
+
+# Add the second time series (Temperature) on a new axis
+par(new=TRUE)
+plot(ts_temp, type="l", col="red", axes=FALSE, xlab="",ylim=c(0, 150))
+axis(side=4)
+mtext("Temperature (C°)", side=4, line=3)
+
+# Add a legend
+legend("topleft", legend=c("Power (kW)", "Temperature (C°)"), col=c("blue", "red"), lty=1)
+```
+
+
+
+We will now proceed with the Train/Test split, following the previously explained 80/20 rule.
+
+
+```{r}
+
+#train/test of power time series
+power_train_set=window(ts_power, start=c(1,1), end=c(40,96))
+power_test_set= window(ts_power, start=c(41,1), end=c(50,96))
+
+#train/test of temperature time series
+temp_train_set=window(ts_temp, start=c(1,1), end=c(40,96))
+temp_test_set=window(ts_temp, start=c(41,1), end=c(50,96))
+
+
+```
+
+
+Now, let's analyze the relationship between these variables by performing two linear regression models and comapare their BIC to select the best model:
+
+## Simple Linear Regression: 
+
+First, we'll apply a straightforward linear regression between the Power and Temperature time series, ignoring any trends or seasonality. This will give us a basic understanding of the direct relationship between these variables.
+
+```{r}
+SLR_model = tslm(power_train_set ~ temp_train_set)
+summary(SLR_model)
+
+```
+The model shows a significant positive relationship between Temperature and Power consumption, with each degree increase in temperature leading to an estimated 9.95 kW rise in power. However, the model explains only about 20.8% of the variance in Power, indicating other factors are also at play.
+
+
+## Advanced Linear Regression with Tendency and Seasonality: 
+
+Next, we'll refine our approach by accounting for potential trends and seasonality in the data. We'll detrend and deseasonalize both time series before applying the linear regression. This will allow us to capture the true relationship between Power and Temperature, isolated from underlying patterns in the data.
+
+```{r}
+
+# Create a season factor variable for both train and test sets
+season_train = factor(cycle(temp_train_set))
+season_test = factor(cycle(temp_test_set))
+
+# Create a trend variable for both train and test sets
+trend_train = seq_along(temp_train_set)
+trend_test = seq_along(temp_test_set) + length(temp_train_set)
+
+ALR_model =tslm(power_train_set ~ temp_train_set + season_train + trend_train)
+summary(ALR_model)
+```
+
+This regression model includes Temperature, seasonality, and trend as predictors of Power consumption. 
+The ALR model explains approximately 96% of the variance in Power (R² = 0.9598), indicating a strong fit.
+
+Temperature has a positive and significant impact on Power consumption.
+Trend shows a slight but significant negative impact, indicating a gradual decrease over time.
+Many seasonal factors are significant, with varying impacts, reflecting the influence of different time periods on Power usage.
+Overall, the model effectively captures the relationship between Power and the predictors, accounting for both seasonal patterns and trends.
+
+
+Let's proceed by applying cross-validation to evaluate both linear regression models. This will help us select the better model by determining which one achieves a more effective balance between fit and complexity.
+
+```{r}
+print("results of Cross Validation of Simple Linear Model without Tendency and Seasonality:")
+CV(SLR_model)
+
+print("results of Cross Validation of Advanced Linear Regression with Tendency and Seasonality:")
+CV(ALR_model)
+```
+As the ALR_model presents the lowest BIC , it is better.
+
+### Residuals Analysis
+
+Now, we analyze the residuals, 
+
+```{r}
+
+checkresiduals(ALR_model, test='LB', plot=TRUE)
+ggPacf(ALR_model$residuals)
+
+```
+
+The Ljung-Box test results indicate that the residuals from the linear regression model exhibit significant autocorrelation (Q* = 8765.4, p-value < 2.2e-16). This suggests that the residuals are not independent, likely due to autocorrelation. To address this, we need to ensure stationarity in the time series data.
+
+Let's design a model for residuals using SARIMA.
+
+
+We use the Augmented Dickey-Fuller (ADF) test on the residuals of to test for stationarity
+```{r}
+adf.test(ALR_model$residuals)
+
+```
+As the test shows that the residuals are stationary.
+
+
+```{r}
+
+SARIMA_residuals_model = auto.arima(ALR_model$residuals, seasonal = TRUE)
+summary(SARIMA_residuals_model)
+checkresiduals(SARIMA_residuals_model, test='LB', plot=TRUE)
+
+```
+
+```{r}
+SARIMA_residuals_model=Arima(ALR_model$residuals,order=c(5,0,0),seasonal=c(1, 0, 1))
+summary(SARIMA_residuals_model)
+
+checkresiduals(SARIMA_residuals_model, test='LB', plot=TRUE)
+```
+
+## Dynamic Regression Model
+
+Now let's try a Dynamic regression model based on the best SARIMA (5, 0, 0)(0, 1, 1). I've test alot and I choosed this one 
+
+```{r}
+DR_model = Arima(y = power_train_set, 
+                  xreg = temp_train_set, 
+                  order = c(5, 0, 0), 
+                  seasonal = list(order = c(0, 1, 1)))
+summary(DR_model)
+
+tsdisplay(ALR_model$residuals)
+checkresiduals(DR_model,test='LB', plot=TRUE)
+ggPacf(DR_model$residuals)
+
+```
+
+
+
+## Neural Network Auto Regession
+
+Let's try to implement a neural network AR for 
+```{r}
+NNAR_model=nnetar(power_train_set, xreg=temp_train_set)
+print(NNAR_model)
+
+```
+
+
+## Choose th best model model:
+
+Let's compare different RMSE of the models
+
+```{r}
+# Make predictions using the SLR model
+SLR_predictions = forecast(SLR_model, newdata = data.frame(temp_train_set = temp_test_set))
+
+# Make predictions using the ALR model
+ALR_predictions = forecast(ALR_model, newdata = data.frame(temp_train_set = temp_test_set, season_train = season_test, trend_train = trend_test))
+ALR_residual_predictions = forecast(SARIMA_residuals_model, h = length(temp_test_set))
+adjusted_ALR_predictions = ALR_predictions$mean + ALR_residual_predictions$mean
+
+# Make predictions using the DR model
+DR_predictions = forecast(DR_model,xreg = temp_test_set)
+
+# Make predictions using the nn_AR model
+NNAR_predictions = forecast(NNAR_model,xreg = temp_test_set)
+
+
+# Calculate RMSE for models
+RMSE_SLR = sqrt(mean((power_test_set - SLR_predictions$mean)^2))
+
+RMSE_ALR = sqrt(mean((power_test_set - adjusted_ALR_predictions)^2))
+
+RMSE_DR = sqrt(mean((power_test_set - DR_predictions$mean)^2))
+
+RMSE_NNAR = sqrt(mean((power_test_set - NNAR_predictions$mean)^2))
+
+# Print RMSE values for all models
+cat("RMSE for DR Model:", RMSE_DR, "\n")
+cat("RMSE for Adjusted ALR Model:", RMSE_ALR, "\n")
+cat("RMSE for SLR Model:", RMSE_SLR, "\n")
+cat("RMSE for nn_AR Model:", RMSE_NNAR, "\n")
+
+```
+```{r}
+# Plot the data and predictions
+par(mfrow=c(1,1))
+plot(power_test_set, xlim=c(41,51), ylim=c(120,500),main="Comparaison of models with Tempearature used ", ylab="Power (kW)", xlab="Time")
+lines(power_test_set, lty=2)
+lines(SLR_predictions$mean, col=2)
+lines(adjusted_ALR_predictions, col=3)
+lines(DR_predictions$mean, col=4)
+lines(NNAR_predictions$mean, col=5)
+
+# Add a legend
+legend('topleft',
+       col=1:5,
+       lty=1,
+       legend=c('Real Values',
+                'Forcasts(SLR)',
+                'Forcasts(ALR)',
+                'Forcasts(DR)',
+                'Forcasts(NNAR)'))
+
+```
+
+## Forcasts with the best model 
+
+I will select the Dynamic Regression model because it provides better results. While the residuals might require some refinement, the model is still appropriate for use.
+
+
+Let's forecast for the day 21 February 
+
+```{r}
+
+ts_temp_21feb=window(ts_temp, start=c(51,1), end=c(51,96))
+
+predict_power_21feb=forecast(DR_model,xreg = ts_temp_21feb)
+
+plot(predict_power_21feb, main="Historical Power Consumption  + last day forecast")
+
+#write_xlsx(data.frame(Power_forcast_with_Temp = round(as.numeric(predict_power_21feb$mean),1)),path = "\\TimeSeriesAnalysis\\timeseries_forecast.xlsx")
+
+```
+
+
+# Cocnlusion
+
+
+In conclusion, this project successfully demonstrates the application of various forecasting models to predict electricity consumption, both with and without the influence of outdoor air temperature. By rigorously testing and tuning these models, we achieved accurate forecasts that highlight the importance of incorporating environmental factors. The comprehensive report and accompanying R code provide a clear methodology and showcase the analytical process, ensuring reproducibility and adherence to project guidelines.
